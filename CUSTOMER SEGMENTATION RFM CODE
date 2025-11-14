@@ -1,77 +1,56 @@
-# --- Step 1: Import Libraries ---
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from datetime import datetime
-import seaborn as sns
 
-# --- Step 2: Load Dataset ---
-# (You can replace the file path with your dataset, e.g. "OnlineRetail.xlsx")
-data = pd.read_excel("OnlineRetail.xlsx")
-print("Dataset loaded successfully!")
-print(data.head())
+# Step 1: Simulate or load transaction data
+data = {
+    'CustomerID': [1, 1, 2, 2, 2, 3, 4, 4, 5],
+    'InvoiceDate': [
+        '2023-01-01', '2023-02-15', '2023-01-10', '2023-03-20', '2023-04-05',
+        '2023-02-01', '2023-01-15', '2023-03-10', '2023-05-01'
+    ],
+    'Amount': [100, 150, 200, 50, 300, 75, 120, 80, 250]
+}
 
-# --- Step 3: Data Cleaning ---
-# Remove missing Customer IDs
-data = data[data['CustomerID'].notnull()]
+df = pd.DataFrame(data)
+df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
 
-# Remove cancelled transactions (InvoiceNo starting with 'C')
-data = data[~data['InvoiceNo'].astype(str).str.startswith('C')]
+# Step 2: Define the reference date (end of analysis period)
+reference_date = datetime(2023, 6, 1)
 
-# Add Total Amount column
-data['TotalAmount'] = data['Quantity'] * data['UnitPrice']
+# Step 3: Calculate RFM metrics
+rfm = df.groupby('CustomerID').agg(
+    Recency=('InvoiceDate', lambda x: (reference_date - x.max()).days),
+    Frequency=('InvoiceDate', 'count'),
+    Monetary=('Amount', 'sum')
+).reset_index()
 
-# --- Step 4: RFM Calculation ---
-# Define latest date for Recency calculation
-latest_date = data['InvoiceDate'].max() + pd.DateOffset(days=1)
+# Step 4: Assign RFM scores using ranking + qcut (works for small datasets)
+rfm['R_Score'] = pd.qcut(rfm['Recency'].rank(method='first'), 5, labels=[5,4,3,2,1])
+rfm['F_Score'] = pd.qcut(rfm['Frequency'].rank(method='first'), 5, labels=[1,2,3,4,5])
+rfm['M_Score'] = pd.qcut(rfm['Monetary'].rank(method='first'), 5, labels=[1,2,3,4,5])
 
-# Calculate R, F, M values
-rfm = data.groupby('CustomerID').agg({
-    'InvoiceDate': lambda x: (latest_date - x.max()).days,   # Recency
-    'InvoiceNo': 'nunique',                                 # Frequency
-    'TotalAmount': 'sum'                                    # Monetary
-})
+# Step 5: Combine RFM score into a single string
+rfm['RFM_Score'] = rfm['R_Score'].astype(str) + rfm['F_Score'].astype(str) + rfm['M_Score'].astype(str)
 
-# Rename columns
-rfm.columns = ['Recency', 'Frequency', 'Monetary']
-
-# --- Step 5: RFM Scoring ---
-rfm['R_rank'] = pd.qcut(rfm['Recency'], 4, labels=[4,3,2,1])
-rfm['F_rank'] = pd.qcut(rfm['Frequency'].rank(method='first'), 4, labels=[1,2,3,4])
-rfm['M_rank'] = pd.qcut(rfm['Monetary'], 4, labels=[1,2,3,4])
-
-rfm['RFM_Score'] = rfm['R_rank'].astype(str) + rfm['F_rank'].astype(str) + rfm['M_rank'].astype(str)
-
-# --- Step 6: Define Customer Segments ---
-def segment_customer(score):
-    if score == '444':
-        return 'Top Customers'
-    elif score[0] == '4':
+# Step 6: Segment customers based on rules
+def segment_customer(row):
+    r, f, m = int(row['R_Score']), int(row['F_Score']), int(row['M_Score'])
+    
+    if r >= 4 and f >= 4 and m >= 4:
+        return 'Champions'
+    elif r >= 3 and f >= 3 and m >= 3:
         return 'Loyal Customers'
-    elif score[1] == '4':
-        return 'Frequent Buyers'
-    elif score[2] == '4':
-        return 'Big Spenders'
-    elif score[0] == '1':
-        return 'Lost Customers'
+    elif r >= 3 and f <= 2 and m <= 2:
+        return 'New Customers'
+    elif r <= 2 and f >= 3 and m >= 3:
+        return 'At-Risk'
+    elif r <= 2 and f <= 2 and m <= 2:
+        return 'Lost'
     else:
-        return 'Regular Customers'
+        return 'Others'
 
-rfm['Segment'] = rfm['RFM_Score'].apply(segment_customer)
+rfm['Segment'] = rfm.apply(segment_customer, axis=1)
 
-# --- Step 7: Display Results ---
-print("\n Sample RFM Table:")
-print(rfm.head())
-
-# --- Step 8: Visualization ---
-plt.figure(figsize=(10,6))
-sns.countplot(data=rfm, x='Segment', order=rfm['Segment'].value_counts().index)
-plt.title('Customer Segments based on RFM')
-plt.xlabel('Segment')
-plt.ylabel('Number of Customers')
-plt.xticks(rotation=30)
-plt.show()
-
-# --- Step 9: Save Result ---
-rfm.to_csv("RFM_Customer_Segmentation.csv")
-print("\n RFM segmentation saved to 'RFM_Customer_Segmentation.csv'")
+# Step 7: Display final RFM table
+print(rfm)
